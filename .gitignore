@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+*.egg-info/
+
+# Node / JS
+node_modules/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
