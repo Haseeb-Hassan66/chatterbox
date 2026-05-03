@@ -26,7 +26,7 @@ def register_socket_events(sio):
                 {"_id": ObjectId(user_id)},
                 {"$set": {"isOnline": True, "lastSeen": datetime.now(timezone.utc)}}
             )
-            await sio.broadcast.emit("user_status", {"userId": user_id, "isOnline": True})
+            await sio.emit("user_status", {"userId": user_id, "isOnline": True})
 
     @sio.event
     async def set_offline(sid, data):
@@ -36,13 +36,12 @@ def register_socket_events(sio):
                 {"_id": ObjectId(user_id)},
                 {"$set": {"isOnline": False, "lastSeen": datetime.now(timezone.utc)}}
             )
-            await sio.broadcast.emit("user_status", {"userId": user_id, "isOnline": False})
+            await sio.emit("user_status", {"userId": user_id, "isOnline": False})
 
     @sio.event
     async def join_group(sid, data):
         group_id = data.get("groupId")
         await sio.enter_room(sid, group_id)
-        print(f"{sid} joined group {group_id}")
 
     @sio.event
     async def leave_group(sid, data):
@@ -55,9 +54,14 @@ def register_socket_events(sio):
         duration = DELETE_DURATIONS.get(mode)
         expires_at = datetime.now(timezone.utc) + duration if duration else None
 
+        # Fetch sender username so it's stored in the message
+        sender = await users_col.find_one({"_id": ObjectId(data["senderId"])})
+        sender_name = sender["username"] if sender else "Unknown"
+
         msg = {
             "groupId":    ObjectId(data["groupId"]),
             "senderId":   ObjectId(data["senderId"]),
+            "senderName": sender_name,
             "content":    data["content"],
             "readBy":     [ObjectId(data["senderId"])],
             "deleteMode": mode,
@@ -70,22 +74,40 @@ def register_socket_events(sio):
             "_id":        str(result.inserted_id),
             "groupId":    data["groupId"],
             "senderId":   data["senderId"],
+            "senderName": sender_name,
             "content":    data["content"],
             "deleteMode": mode,
+            "readBy":     [data["senderId"]],
             "expiresAt":  expires_at.isoformat() if expires_at else None,
             "createdAt":  msg["createdAt"].isoformat()
         }
         await sio.emit("new_message", payload, room=data["groupId"])
 
     @sio.event
+    async def mark_read(sid, data):
+        msg_id = data.get("messageId")
+        user_id = data.get("userId")
+        if msg_id and user_id:
+            await messages_col.update_one(
+                {"_id": ObjectId(msg_id)},
+                {"$addToSet": {"readBy": ObjectId(user_id)}}
+            )
+            await sio.emit("message_read", {
+                "messageId": msg_id,
+                "userId": user_id
+            }, room=data["groupId"])
+
+    @sio.event
     async def delete_message(sid, data):
         await messages_col.delete_one({"_id": ObjectId(data["messageId"])})
-        await sio.emit("message_deleted", {"messageId": data["messageId"]}, room=data["groupId"])
+        await sio.emit("message_deleted", {
+            "messageId": data["messageId"]
+        }, room=data["groupId"])
 
     @sio.event
     async def typing(sid, data):
         await sio.emit("user_typing", {
-            "userId": data["userId"],
+            "userId":   data["userId"],
             "username": data["username"],
-            "groupId": data["groupId"]
+            "groupId":  data["groupId"]
         }, room=data["groupId"], skip_sid=sid)

@@ -12,6 +12,7 @@ def serialize_group(g):
         "name": g["name"],
         "admin": str(g["admin"]),
         "members": [str(m) for m in g.get("members", [])],
+        "isDM": g.get("isDM", False),
         "createdAt": g["createdAt"].isoformat()
     }
 
@@ -24,6 +25,7 @@ async def create_group(body: CreateGroupModel):
         "name": body.name,
         "admin": ObjectId(body.adminId),
         "members": member_ids,
+        "isDM": body.isDM,
         "createdAt": datetime.now(timezone.utc)
     }
     result = await groups_col.insert_one(group)
@@ -33,7 +35,24 @@ async def create_group(body: CreateGroupModel):
 async def get_user_groups(user_id: str):
     groups = []
     async for g in groups_col.find({"members": ObjectId(user_id)}):
-        groups.append(serialize_group(g))
+        data = serialize_group(g)
+        last_msg = await messages_col.find_one(
+            {"groupId": g["_id"]},
+            sort=[("createdAt", -1)]
+        )
+        if last_msg:
+            data["lastMessage"] = {
+                "content":    last_msg["content"],
+                "senderName": last_msg.get("senderName", ""),
+                "createdAt":  last_msg["createdAt"].isoformat()
+            }
+        else:
+            data["lastMessage"] = None
+        groups.append(data)
+    groups.sort(
+        key=lambda x: x["lastMessage"]["createdAt"] if x["lastMessage"] else x["createdAt"],
+        reverse=True
+    )
     return groups
 
 @router.get("/{group_id}/messages")
@@ -46,14 +65,15 @@ async def get_messages(group_id: str):
     )
     async for m in cursor:
         msgs.append({
-            "_id": str(m["_id"]),
-            "groupId": str(m["groupId"]),
-            "senderId": str(m["senderId"]),
-            "content": m["content"],
-            "readBy": [str(r) for r in m.get("readBy", [])],
+            "_id":        str(m["_id"]),
+            "groupId":    str(m["groupId"]),
+            "senderId":   str(m["senderId"]),
+            "senderName": m.get("senderName", "Unknown"),
+            "content":    m["content"],
+            "readBy":     [str(r) for r in m.get("readBy", [])],
             "deleteMode": m.get("deleteMode", "manual"),
-            "expiresAt": m["expiresAt"].isoformat() if m.get("expiresAt") else None,
-            "createdAt": m["createdAt"].isoformat()
+            "expiresAt":  m["expiresAt"].isoformat() if m.get("expiresAt") else None,
+            "createdAt":  m["createdAt"].isoformat()
         })
     msgs.reverse()
     return msgs
@@ -66,9 +86,23 @@ async def search_messages(group_id: str, q: str):
         "$text": {"$search": q}
     }):
         msgs.append({
-            "_id": str(m["_id"]),
-            "senderId": str(m["senderId"]),
-            "content": m["content"],
-            "createdAt": m["createdAt"].isoformat()
+            "_id":        str(m["_id"]),
+            "senderId":   str(m["senderId"]),
+            "senderName": m.get("senderName", "Unknown"),
+            "content":    m["content"],
+            "createdAt":  m["createdAt"].isoformat()
         })
     return msgs
+
+@router.get("/dm/{user_a}/{user_b}")
+async def get_dm_group(user_a: str, user_b: str):
+    """Find an existing DM group between exactly these two users."""
+    a_id = ObjectId(user_a)
+    b_id = ObjectId(user_b)
+    g = await groups_col.find_one({
+        "isDM": True,
+        "members": {"$all": [a_id, b_id], "$size": 2}
+    })
+    if not g:
+        raise HTTPException(status_code=404, detail="No DM group found")
+    return serialize_group(g)

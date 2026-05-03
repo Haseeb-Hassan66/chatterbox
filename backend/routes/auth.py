@@ -51,3 +51,10 @@ async def get_all_users():
     async for user in users_col.find({}, {"password": 0}):
         users.append(serialize_user(user))
     return users
+
+@router.get("/users/{user_id}")
+async def get_user(user_id: str):
+    user = await users_col.find_one({"_id": ObjectId(user_id)}, {"password": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return serialize_user(user)

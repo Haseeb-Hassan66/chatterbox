@@ -5,3 +5,4 @@ class CreateGroupModel(BaseModel):
     name: str
     adminId: str
     members: List[str] = []
+    isDM: bool = False

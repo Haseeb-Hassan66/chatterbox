@@ -10,6 +10,11 @@ venv/
 node_modules/
 .DS_Store
 
+# React / Vite
+dist/
+dist-ssr/
+*.local
+
 # IDE
 .vscode/
 .idea/
