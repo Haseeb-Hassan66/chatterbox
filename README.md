@@ -1,6 +1,6 @@
 <div align="center">
 
-# 💬 ChatterBox — Real-Time Collaborative Messaging
+# 💬 ChatterBox  — Real-Time Collaborative Messaging
 
 **A high-performance, full-stack communication platform featuring real-time group dynamics, private messaging, and advanced usage analytics.**
 
