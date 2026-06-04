@@ -55,6 +55,15 @@ export default function ChatDashboard() {
                     api.get('/auth/users')
                 ]);
                 setGroups(gRes.data);
+                
+                const initialUnreads = {};
+                gRes.data.forEach(g => {
+                    if (g.unreadCount > 0) {
+                        initialUnreads[g.id] = g.unreadCount;
+                    }
+                });
+                setUnreadCounts(initialUnreads);
+
                 setAllUsers(uRes.data);
             } catch (err) {
                 console.error('Failed to load initial data');
@@ -87,7 +96,9 @@ export default function ChatDashboard() {
                     socket.emit('mark_read', { messageId: msg._id, userId: user.id, groupId: msg.groupId });
                 }
             } else {
-                setUnreadCounts(prev => ({ ...prev, [msg.groupId]: (prev[msg.groupId] || 0) + 1 }));
+                if (msg.senderId !== user.id) {
+                    setUnreadCounts(prev => ({ ...prev, [msg.groupId]: (prev[msg.groupId] || 0) + 1 }));
+                }
             }
         });
 
@@ -184,7 +195,7 @@ export default function ChatDashboard() {
             const res = await api.get(`/groups/${groupId}/messages`);
             setMessages(res.data);
             res.data.forEach(m => {
-                if (m.senderId !== user.id) {
+                if (m.senderId !== user.id && (!m.readBy || !m.readBy.includes(user.id))) {
                     socket.emit('mark_read', { messageId: m._id, userId: user.id, groupId });
                 }
             });

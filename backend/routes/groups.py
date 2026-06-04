@@ -43,7 +43,8 @@ async def create_group(body: CreateGroupModel):
 @router.get("/user/{user_id}")
 async def get_user_groups(user_id: str):
     groups = []
-    async for g in groups_col.find({"members": to_oid(user_id)}):
+    user_oid = to_oid(user_id)
+    async for g in groups_col.find({"members": user_oid}):
         data = serialize_group(g)
         last_msg = await messages_col.find_one(
             {"groupId": g["_id"]},
@@ -57,6 +58,13 @@ async def get_user_groups(user_id: str):
             }
         else:
             data["lastMessage"] = None
+        
+        unread_count = await messages_col.count_documents({
+            "groupId": g["_id"],
+            "readBy": {"$ne": user_oid}
+        })
+        data["unreadCount"] = unread_count
+
         groups.append(data)
     groups.sort(
         key=lambda x: x["lastMessage"]["createdAt"] if x["lastMessage"] else x["createdAt"],
