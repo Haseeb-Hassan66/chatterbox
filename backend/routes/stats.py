@@ -1,10 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from database import messages_col
+from dependencies import get_current_user
 
 router = APIRouter()
 
 @router.get("/group-activity")
-async def group_activity():
+async def group_activity(current_user = Depends(get_current_user)):
     pipeline = [
         {"$group": {
             "_id": "$groupId",
@@ -20,6 +21,7 @@ async def group_activity():
             "as": "group"
         }},
         {"$unwind": "$group"},
+        {"$match": {"group.members": current_user["_id"]}},
         {"$project": {
             "groupName": "$group.name",
             "messageCount": 1,

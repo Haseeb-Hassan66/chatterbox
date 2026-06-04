@@ -13,6 +13,7 @@ export const AuthProvider = ({ children }) => {
 
     useEffect(() => {
         if (user && token) {
+            socket.auth = { token };
             socket.connect();
             // Emit only after the connection is established (connect() is async)
             socket.once('connect', () => {

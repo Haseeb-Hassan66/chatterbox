@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from database import users_col
 from models.user import RegisterModel, LoginModel
 import bcrypt
@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from bson.errors import InvalidId
+
+from dependencies import get_current_user
 
 router = APIRouter()
 
@@ -62,14 +64,14 @@ async def login(body: LoginModel):
     }
 
 @router.get("/users")
-async def get_all_users():
+async def get_all_users(current_user = Depends(get_current_user)):
     users = []
     async for user in users_col.find({}, {"password": 0}):
         users.append(serialize_user(user))
     return users
 
 @router.get("/users/{user_id}")
-async def get_user(user_id: str):
+async def get_user(user_id: str, current_user = Depends(get_current_user)):
     user = await users_col.find_one({"_id": to_oid(user_id)}, {"password": 0})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

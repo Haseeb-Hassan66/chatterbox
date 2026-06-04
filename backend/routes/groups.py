@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from database import groups_col, users_col, messages_col
 from models.group import CreateGroupModel
 from bson import ObjectId
 from bson.errors import InvalidId
 from datetime import datetime, timezone
+
+from dependencies import get_current_user
 
 router = APIRouter()
 
@@ -25,7 +27,7 @@ def serialize_group(g):
     }
 
 @router.post("/create")
-async def create_group(body: CreateGroupModel):
+async def create_group(body: CreateGroupModel, current_user = Depends(get_current_user)):
     admin_oid = to_oid(body.adminId)
     member_ids = [to_oid(m) for m in body.members]
     if admin_oid not in member_ids:
@@ -41,7 +43,7 @@ async def create_group(body: CreateGroupModel):
     return {"message": "Group created", "id": str(result.inserted_id)}
 
 @router.get("/user/{user_id}")
-async def get_user_groups(user_id: str):
+async def get_user_groups(user_id: str, current_user = Depends(get_current_user)):
     groups = []
     user_oid = to_oid(user_id)
     async for g in groups_col.find({"members": user_oid}):
@@ -73,7 +75,7 @@ async def get_user_groups(user_id: str):
     return groups
 
 @router.get("/{group_id}/messages")
-async def get_messages(group_id: str):
+async def get_messages(group_id: str, current_user = Depends(get_current_user)):
     msgs = []
     cursor = messages_col.find(
         {"groupId": to_oid(group_id)}
@@ -94,7 +96,7 @@ async def get_messages(group_id: str):
     return msgs
 
 @router.get("/{group_id}/search")
-async def search_messages(group_id: str, q: str):
+async def search_messages(group_id: str, q: str, current_user = Depends(get_current_user)):
     msgs = []
     async for m in messages_col.find({
         "groupId": to_oid(group_id),
@@ -110,7 +112,7 @@ async def search_messages(group_id: str, q: str):
     return msgs
 
 @router.get("/dm/{user_a}/{user_b}")
-async def get_dm_group(user_a: str, user_b: str):
+async def get_dm_group(user_a: str, user_b: str, current_user = Depends(get_current_user)):
     """Find an existing DM group between exactly these two users."""
     a_id = to_oid(user_a)
     b_id = to_oid(user_b)
