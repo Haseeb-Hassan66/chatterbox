@@ -86,7 +86,7 @@ export default function ChatDashboard() {
                 if (gIndex > -1) {
                     newGroups[gIndex] = {
                         ...newGroups[gIndex],
-                        lastMessage: { content: msg.content, senderName: msg.senderName, createdAt: msg.createdAt }
+                        lastMessage: { content: msg.content, senderName: msg.senderName, senderId: msg.senderId, createdAt: msg.createdAt }
                     };
                 }
                 return newGroups;
@@ -104,8 +104,19 @@ export default function ChatDashboard() {
             }
         });
 
-        socket.on('message_deleted', ({ messageId }) => {
+        socket.on('message_deleted', ({ messageId, groupId, newLastMessage }) => {
             setMessages(prev => prev.filter(m => m._id !== messageId));
+            setGroups(prevGroups => {
+                const newGroups = [...prevGroups];
+                const gIndex = newGroups.findIndex(x => x.id === groupId);
+                if (gIndex > -1) {
+                    newGroups[gIndex] = {
+                        ...newGroups[gIndex],
+                        lastMessage: newLastMessage
+                    };
+                }
+                return newGroups;
+            });
         });
 
         socket.on('message_read', ({ messageId, userId }) => {
@@ -130,12 +141,20 @@ export default function ChatDashboard() {
             setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, isOnline } : u));
         });
 
+        socket.on('group_added', ({ groupId }) => {
+            socket.emit('join_group', { groupId });
+            api.get(`/groups/user/${user.id}`).then(res => {
+                setGroups(res.data);
+            });
+        });
+
         return () => {
             socket.off('new_message');
             socket.off('message_deleted');
             socket.off('message_read');
             socket.off('user_typing');
             socket.off('user_status');
+            socket.off('group_added');
         };
     }, [currentChat, user.id, user.username]);
 
@@ -176,7 +195,10 @@ export default function ChatDashboard() {
                     const gRes = await api.get(`/groups/user/${user.id}`);
                     setGroups(gRes.data);
                     dmGroup = gRes.data.find(g => g.id === createRes.data.id);
-                    if (dmGroup) socket.emit('join_group', { groupId: dmGroup.id });
+                    if (dmGroup) {
+                        socket.emit('join_group', { groupId: dmGroup.id });
+                        socket.emit('notify_new_group', { groupId: dmGroup.id, members: [user.id, otherUser.id] });
+                    }
                 }
             }
             if (!dmGroup) throw new Error('Could not open conversation');
@@ -215,6 +237,7 @@ export default function ChatDashboard() {
             deleteMode
         });
         setMsgInput('');
+        setCurrentSideTab('chats');
     };
 
     const handleInputKeyDown = (e) => {
@@ -244,7 +267,10 @@ export default function ChatDashboard() {
             setShowCreateGroup(false);
             const gRes = await api.get(`/groups/user/${user.id}`);
             setGroups(gRes.data);
-            if (res.data.id) socket.emit('join_group', { groupId: res.data.id });
+            if (res.data.id) {
+                socket.emit('join_group', { groupId: res.data.id });
+                socket.emit('notify_new_group', { groupId: res.data.id, members: [...selectedMembers, user.id] });
+            }
         } catch (err) {
             setAlertMsg('Failed to create group');
         }
@@ -256,8 +282,9 @@ export default function ChatDashboard() {
         setSearchResults(res.data);
     };
 
-    // Derived states
     const filteredChats = groups.filter(g => {
+        if (!g.lastMessage) return false;
+        
         if (g.isDM) {
             const p = getDMPartner(g);
             return p && p.username.toLowerCase().includes(sideSearch.toLowerCase());
@@ -321,7 +348,9 @@ export default function ChatDashboard() {
                             let preview = g.isDM ? (partner?.isOnline ? '🟢 Online' : '⚫ Offline') : `${g.members.length} members`;
                             let time = '';
                             if (g.lastMessage) {
-                                preview = (g.lastMessage.senderName ? g.lastMessage.senderName + ': ' : '') + g.lastMessage.content;
+                                const isSenderMe = g.lastMessage.senderId === user.id || g.lastMessage.senderName === user.username;
+                                const senderDisplay = isSenderMe ? 'You' : g.lastMessage.senderName;
+                                preview = (senderDisplay ? senderDisplay + ': ' : '') + g.lastMessage.content;
                                 time = fmtTime(g.lastMessage.createdAt);
                             }
                             return (

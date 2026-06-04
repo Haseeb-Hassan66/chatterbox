@@ -56,6 +56,7 @@ async def get_user_groups(user_id: str, current_user = Depends(get_current_user)
             data["lastMessage"] = {
                 "content":    last_msg["content"],
                 "senderName": last_msg.get("senderName", ""),
+                "senderId":   str(last_msg["senderId"]),
                 "createdAt":  last_msg["createdAt"].isoformat()
             }
         else:

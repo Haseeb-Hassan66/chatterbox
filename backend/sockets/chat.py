@@ -1,7 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from bson.errors import InvalidId
-from database import messages_col, users_col
+from database import messages_col, users_col, groups_col
 from jose import jwt, JWTError
 import os
 import socketio
@@ -30,6 +30,13 @@ def register_socket_events(sio):
                 raise socketio.exceptions.ConnectionRefusedError("Invalid token")
             connected_users[sid] = user_id
             print(f"Client connected: {sid} (User: {user_id})")
+            
+            # Join personal room for private notifications
+            await sio.enter_room(sid, user_id)
+            
+            # Join all current group and DM rooms for real-time messages
+            async for g in groups_col.find({"members": ObjectId(user_id)}):
+                await sio.enter_room(sid, str(g["_id"]))
         except JWTError:
             raise socketio.exceptions.ConnectionRefusedError("Invalid token")
 
@@ -178,11 +185,28 @@ def register_socket_events(sio):
                 return
                 
             await messages_col.delete_one({"_id": msg_oid})
+            
+            # Find the new latest message in the group
+            new_last_msg = await messages_col.find_one(
+                {"groupId": ObjectId(group_id)},
+                sort=[("createdAt", -1)]
+            )
+            
+            new_last_payload = None
+            if new_last_msg:
+                new_last_payload = {
+                    "content":    new_last_msg["content"],
+                    "senderName": new_last_msg.get("senderName", ""),
+                    "senderId":   str(new_last_msg["senderId"]),
+                    "createdAt":  new_last_msg["createdAt"].isoformat()
+                }
         except (InvalidId, TypeError):
             return
             
         await sio.emit("message_deleted", {
-            "messageId": msg_id
+            "messageId": msg_id,
+            "groupId": group_id,
+            "newLastMessage": new_last_payload
         }, room=group_id)
 
     @sio.event
@@ -198,3 +222,11 @@ def register_socket_events(sio):
                 "username": username,
                 "groupId":  group_id
             }, room=group_id, skip_sid=sid)
+
+    @sio.event
+    async def notify_new_group(sid, data):
+        group_id = data.get("groupId")
+        members = data.get("members", [])
+        if group_id:
+            for m_id in members:
+                await sio.emit("group_added", {"groupId": group_id}, room=str(m_id))
