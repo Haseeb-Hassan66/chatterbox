@@ -2,9 +2,17 @@ from fastapi import APIRouter, HTTPException
 from database import groups_col, users_col, messages_col
 from models.group import CreateGroupModel
 from bson import ObjectId
+from bson.errors import InvalidId
 from datetime import datetime, timezone
 
 router = APIRouter()
+
+def to_oid(value: str) -> ObjectId:
+    """Convert a string to ObjectId, raising HTTP 400 on invalid format."""
+    try:
+        return ObjectId(value)
+    except (InvalidId, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid ID format: '{value}'")
 
 def serialize_group(g):
     return {
@@ -18,12 +26,13 @@ def serialize_group(g):
 
 @router.post("/create")
 async def create_group(body: CreateGroupModel):
-    member_ids = [ObjectId(m) for m in body.members]
-    if ObjectId(body.adminId) not in member_ids:
-        member_ids.append(ObjectId(body.adminId))
+    admin_oid = to_oid(body.adminId)
+    member_ids = [to_oid(m) for m in body.members]
+    if admin_oid not in member_ids:
+        member_ids.append(admin_oid)
     group = {
         "name": body.name,
-        "admin": ObjectId(body.adminId),
+        "admin": admin_oid,
         "members": member_ids,
         "isDM": body.isDM,
         "createdAt": datetime.now(timezone.utc)
@@ -34,7 +43,7 @@ async def create_group(body: CreateGroupModel):
 @router.get("/user/{user_id}")
 async def get_user_groups(user_id: str):
     groups = []
-    async for g in groups_col.find({"members": ObjectId(user_id)}):
+    async for g in groups_col.find({"members": to_oid(user_id)}):
         data = serialize_group(g)
         last_msg = await messages_col.find_one(
             {"groupId": g["_id"]},
@@ -59,10 +68,8 @@ async def get_user_groups(user_id: str):
 async def get_messages(group_id: str):
     msgs = []
     cursor = messages_col.find(
-        {"groupId": ObjectId(group_id)},
-        sort=[("createdAt", -1)],
-        limit=50
-    )
+        {"groupId": to_oid(group_id)}
+    ).sort("createdAt", -1).limit(50)
     async for m in cursor:
         msgs.append({
             "_id":        str(m["_id"]),
@@ -82,7 +89,7 @@ async def get_messages(group_id: str):
 async def search_messages(group_id: str, q: str):
     msgs = []
     async for m in messages_col.find({
-        "groupId": ObjectId(group_id),
+        "groupId": to_oid(group_id),
         "$text": {"$search": q}
     }):
         msgs.append({
@@ -97,8 +104,8 @@ async def search_messages(group_id: str, q: str):
 @router.get("/dm/{user_a}/{user_b}")
 async def get_dm_group(user_a: str, user_b: str):
     """Find an existing DM group between exactly these two users."""
-    a_id = ObjectId(user_a)
-    b_id = ObjectId(user_b)
+    a_id = to_oid(user_a)
+    b_id = to_oid(user_b)
     g = await groups_col.find_one({
         "isDM": True,
         "members": {"$all": [a_id, b_id], "$size": 2}

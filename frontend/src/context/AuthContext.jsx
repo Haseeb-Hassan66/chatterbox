@@ -14,7 +14,10 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         if (user && token) {
             socket.connect();
-            socket.emit('set_online', { userId: user.id });
+            // Emit only after the connection is established (connect() is async)
+            socket.once('connect', () => {
+                socket.emit('set_online', { userId: user.id });
+            });
         } else {
             socket.disconnect();
         }
