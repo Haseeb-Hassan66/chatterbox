@@ -172,6 +172,11 @@ def register_socket_events(sio):
             if not msg or msg.get("senderId") != user_oid:
                 return
                 
+            # If the message has been read by anyone else, prevent deletion
+            read_by = msg.get("readBy", [])
+            if len(read_by) > 1 or (len(read_by) == 1 and read_by[0] != user_oid):
+                return
+                
             await messages_col.delete_one({"_id": msg_oid})
         except (InvalidId, TypeError):
             return

@@ -45,6 +45,7 @@ export default function ChatDashboard() {
     const [selectedMembers, setSelectedMembers] = useState([]);
     const [searchQ, setSearchQ] = useState('');
     const [searchResults, setSearchResults] = useState([]);
+    const [messageToDelete, setMessageToDelete] = useState(null);
 
     useEffect(() => {
         if (!token) return;
@@ -223,9 +224,13 @@ export default function ChatDashboard() {
     };
 
     const deleteMessage = (id) => {
-        if (!currentChat) return;
-        if (!window.confirm('Delete this message? This cannot be undone.')) return;
-        socket.emit('delete_message', { messageId: id, groupId: currentChat.id });
+        setMessageToDelete(id);
+    };
+
+    const confirmDeleteMessage = () => {
+        if (!currentChat || !messageToDelete) return;
+        socket.emit('delete_message', { messageId: messageToDelete, groupId: currentChat.id });
+        setMessageToDelete(null);
     };
 
     const handleCreateGroup = async () => {
@@ -410,7 +415,7 @@ export default function ChatDashboard() {
                                                 {msg.deleteMode !== 'manual' && <span className="bubble-expiry">{msg.deleteMode === '24h' ? '⏱ 24h' : '📅 7d'}</span>}
                                                 <span className="bubble-time">{fmtTime(msg.createdAt)}</span>
                                                 {isMine && <span className={`read-tick ${isSeen ? 'seen' : ''}`} title={isSeen ? 'Seen' : 'Sent'}>{isSeen ? '✓✓' : '✓'}</span>}
-                                                {isMine && <button className="del-btn" onClick={() => deleteMessage(msg._id)}>✕</button>}
+                                                {isMine && !isSeen && <button className="del-btn" onClick={() => deleteMessage(msg._id)}>✕</button>}
                                             </div>
                                         </div>
                                     </div>
@@ -474,6 +479,21 @@ export default function ChatDashboard() {
                         </div>
                         <div className="modal-footer" style={{marginTop:'16px'}}>
                             <button className="btn btn-cancel" onClick={() => setShowSearch(false)}>Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {messageToDelete && (
+                <div className="overlay open" onClick={e => { if(e.target===e.currentTarget) setMessageToDelete(null); }}>
+                    <div className="modal" style={{ maxWidth: '360px' }}>
+                        <h3>Delete message?</h3>
+                        <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '20px', lineHeight: '1.5' }}>
+                            Are you sure you want to delete this message? This action cannot be undone.
+                        </p>
+                        <div className="modal-footer">
+                            <button className="btn btn-cancel" onClick={() => setMessageToDelete(null)}>Cancel</button>
+                            <button className="btn" style={{ background: '#e53935' }} onClick={confirmDeleteMessage}>Delete</button>
                         </div>
                     </div>
                 </div>
