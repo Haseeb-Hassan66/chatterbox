@@ -300,16 +300,11 @@ export default function ChatDashboard() {
         .sort((a, b) => (unreadCounts[b.id] || 0) - (unreadCounts[a.id] || 0));
 
     const filteredPeople = allUsers.filter(u => u.id !== user.id && u.username.toLowerCase().includes(sideSearch.toLowerCase()))
-        .sort((a, b) => {
-            const da = findDMGroup(a.id), db = findDMGroup(b.id);
-            const ua = da ? (unreadCounts[da.id] || 0) : 0;
-            const ub = db ? (unreadCounts[db.id] || 0) : 0;
-            return ub - ua;
-        });
+        .sort((a, b) => a.username.localeCompare(b.username));
 
     const chatsUnread = groups.some(g => (unreadCounts[g.id] || 0) > 0);
     const groupsUnread = groups.some(g => !g.isDM && (unreadCounts[g.id] || 0) > 0);
-    const peopleUnread = allUsers.some(u => { if (u.id === user.id) return false; const dm = findDMGroup(u.id); return dm && (unreadCounts[dm.id] || 0) > 0; });
+    const peopleUnread = false;
 
     let lastDate = '';
 
@@ -386,12 +381,11 @@ export default function ChatDashboard() {
                         filteredPeople.length === 0 ? <div style={{padding:'20px', textAlign:'center', color:'var(--muted)'}}>No other users yet.</div> :
                         filteredPeople.map(u => {
                             const dm = findDMGroup(u.id);
-                            const unread = dm ? (unreadCounts[dm.id] || 0) : 0;
                             return (
-                                <div key={u.id} className={`list-item people-item ${currentChat?.id === dm?.id ? 'active' : ''} ${unread ? 'has-unread' : ''}`} onClick={() => openDMChat(u)}>
+                                <div key={u.id} className={`list-item people-item ${currentChat?.id === dm?.id ? 'active' : ''}`} onClick={() => openDMChat(u)}>
                                     <div className="avatar" style={{background: avatarColor(u.username)}}>{u.username[0].toUpperCase()}<div className={u.isOnline ? 'online-dot' : 'offline-dot'}></div></div>
                                     <div className="item-info">
-                                        <div className="item-name"><span>{u.username}</span>{unread > 0 && <span className="unread">{unread}</span>}</div>
+                                        <div className="item-name"><span>{u.username}</span></div>
                                         <div className="item-preview"><span>{u.isOnline ? '🟢 Online' : '⚫ Offline'}</span></div>
                                     </div>
                                 </div>
