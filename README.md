@@ -101,7 +101,7 @@ chatterbox/
 ## 🚀 Key Features
 
 ### 📡 Real-Time Interactions
-- **Instant Messaging**: Zero-latency delivery with delivery/read receipts.
+- **Instant Messaging**: High-performance delivery with real-time read receipts.
 - **Typing Indicators**: Visual feedback when a participant is composing a message.
 - **Live Online Status**: Real-time tracking of team availability via dedicated socket events.
 
@@ -109,6 +109,7 @@ chatterbox/
 - **Unified Chats Tab**: Intelligently merges Groups and DMs into a single view, sorted by the absolute latest message timestamp.
 - **Private Direct Messaging**: High-speed lookup for existing private channels between users, with automatic room creation.
 - **Self-Destructing Messages**: Per-message TTL (Time-To-Live) settings (24h, 7d, or Manual).
+- **Full-Text Search**: Native MongoDB text indexing allows users to instantly search message history within any group.
 
 ### 📊 Server Analytics
 - **Aggregation Pipeline**: Real-time MongoDB queries to calculate message volume.
@@ -138,10 +139,13 @@ Base URL: `http://localhost:8000/api`
 |---|---|---|
 | `POST` | `/auth/register` | Create a new user account |
 | `POST` | `/auth/login` | Authenticate and receive JWT token |
+| `GET` | `/auth/users` | Fetch all registered users |
+| `GET` | `/auth/users/{id}` | Fetch a specific user's details |
 | `GET` | `/groups/user/{id}` | Fetch all conversations (Groups + DMs) for a user |
 | `POST` | `/groups/create` | Create a new Group or DM channel |
 | `GET` | `/groups/dm/{u1}/{u2}`| Retrieve private conversation channel between two users |
 | `GET` | `/groups/{id}/messages`| Fetch historical message log for a room |
+| `GET` | `/groups/{id}/search?q=...`| Perform a full-text search on messages in a group |
 | `GET` | `/stats/group-activity`| Aggregate system-wide messaging metrics |
 
 ---
