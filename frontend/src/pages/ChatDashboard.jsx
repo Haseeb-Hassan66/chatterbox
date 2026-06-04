@@ -46,6 +46,7 @@ export default function ChatDashboard() {
     const [searchQ, setSearchQ] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [messageToDelete, setMessageToDelete] = useState(null);
+    const [alertMsg, setAlertMsg] = useState(null);
 
     useEffect(() => {
         if (!token) return;
@@ -186,7 +187,7 @@ export default function ChatDashboard() {
             socket.emit('join_group', { groupId: dmGroup.id });
             loadMessages(dmGroup.id);
         } catch (err) {
-            alert('Could not open conversation');
+            setAlertMsg('Could not open conversation');
         }
     };
 
@@ -234,7 +235,10 @@ export default function ChatDashboard() {
     };
 
     const handleCreateGroup = async () => {
-        if (!newGroupName.trim() || !selectedMembers.length) return alert('Enter name and select members');
+        if (!newGroupName.trim() || !selectedMembers.length) {
+            setAlertMsg('Please enter a group name and select at least one member.');
+            return;
+        }
         try {
             const res = await api.post('/groups/create', { name: newGroupName, adminId: user.id, members: selectedMembers });
             setShowCreateGroup(false);
@@ -242,7 +246,7 @@ export default function ChatDashboard() {
             setGroups(gRes.data);
             if (res.data.id) socket.emit('join_group', { groupId: res.data.id });
         } catch (err) {
-            alert('Failed to create group');
+            setAlertMsg('Failed to create group');
         }
     };
 
@@ -494,6 +498,20 @@ export default function ChatDashboard() {
                         <div className="modal-footer">
                             <button className="btn btn-cancel" onClick={() => setMessageToDelete(null)}>Cancel</button>
                             <button className="btn" style={{ background: '#e53935' }} onClick={confirmDeleteMessage}>Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {alertMsg && (
+                <div className="overlay open" onClick={e => { if(e.target===e.currentTarget) setAlertMsg(null); }}>
+                    <div className="modal" style={{ maxWidth: '360px' }}>
+                        <h3>Alert</h3>
+                        <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '20px', lineHeight: '1.5' }}>
+                            {alertMsg}
+                        </p>
+                        <div className="modal-footer">
+                            <button className="btn" onClick={() => setAlertMsg(null)}>OK</button>
                         </div>
                     </div>
                 </div>
