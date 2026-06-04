@@ -100,16 +100,26 @@ chatterbox/
 
 ## 🚀 Key Features
 
-### 📡 Real-Time Interactions
-- **Instant Messaging**: High-performance delivery with real-time read receipts.
-- **Typing Indicators**: Visual feedback when a participant is composing a message.
-- **Live Online Status**: Real-time tracking of team availability via dedicated socket events.
+### 🔒 Security & Identity Protection
+- **JWT API Guard**: All endpoints (such as `/api/auth/users`, `/api/groups`, and `/api/stats`) are protected via FastAPI dependencies. Unauthenticated requests are automatically blocked.
+- **Handshake Authentication**: WebSockets are secured via JWT handshake validation (`socket.auth.token`). Connections with expired or missing tokens are rejected immediately.
+- **Anti-Spoofing Verification**: The backend relies solely on the verified connection state (`connected_users`) mapping sockets to database identities. Sender payloads sent by the frontend are ignored, preventing identity spoofing.
 
-### 👥 Advanced Group Dynamics
-- **Unified Chats Tab**: Intelligently merges Groups and DMs into a single view, sorted by the absolute latest message timestamp.
-- **Private Direct Messaging**: High-speed lookup for existing private channels between users, with automatic room creation.
+### 📡 Real-Time Interactions & Presence
+- **Instant Messaging**: High-performance delivery with real-time double-tick read receipts (`✓` sent, `✓✓` seen).
+- **Auto-Presence System**: Robust user presence tracking. If a user disconnects, closes their browser tab, or their system sleeps, the server catches the disconnect event, updates MongoDB (`isOnline: false`), and broadcasts the offline status in real-time.
+- **Typing Indicators**: Visual feedback when a participant is actively typing inside an open chat room.
+
+### 👥 Advanced Group Dynamics & UX
+- **Weighted Chats Sidebar**: Direct DMs and Group chats are shown in the "Chats" tab only if they have message history (non-empty chats).
+- **Seen Message Deletion Guard**: Message deletion is strictly restricted. Only the sender can delete a message, and only if it has **not** been read/seen by any other group member yet (i.e. before it shows double-checkmarks `✓✓`).
+- **Real-Time Deletion Syncing**: Deleting a message dynamically updates the sidebar preview to show the second-to-last message. If the deleted message was the only message in the conversation, the chat is instantly removed from the Chats tab.
+- **Alphabetical Directory**: The "People" tab functions as a clean contact list, sorted alphabetically with all notifications and unread badges disabled. All dynamic notifications and counts are handled exclusively under the "Chats" tab.
+- **Auto-Switch Sidebar Tab**: Opening a new contact from "People" lets you preview the chat screen, and the tab automatically switches to "Chats" only when you send the first text message.
+- **"You" Preview Prefix**: Displays `"You: [message]"` instead of your username for your own last sent messages in the sidebar.
 - **Self-Destructing Messages**: Per-message TTL (Time-To-Live) settings (24h, 7d, or Manual).
 - **Full-Text Search**: Native MongoDB text indexing allows users to instantly search message history within any group.
+- **Integrated Glassmorphic Modals**: Fluid, custom modal overlays for delete confirmations and notifications, designed to match the application's unified design system.
 
 ### 📊 Server Analytics
 - **Aggregation Pipeline**: Real-time MongoDB queries to calculate message volume.
