@@ -1,8 +1,8 @@
 <div align="center">
 
-# 💬 ChatterBox  — Real-Time Collaborative Messaging
+# 💬 ChatterBox — Real-Time Collaborative Messaging
 
-**A high-performance, full-stack communication platform featuring real-time group dynamics, private messaging, and advanced usage analytics.**
+**A collaborative chat platform featuring real-time group/private messaging, presence tracking, context-aware notifications, and activity statistics.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.x-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -17,15 +17,7 @@
 
 ## 📌 Overview
 
-ChatterBox is a modern messaging ecosystem designed to bridge the gap between simple group chats and professional team collaboration tools. Built with a focus on real-time responsiveness and high-concurrency, the system provides a seamless environment for both public discussions and private, high-security conversations.
-
-The platform solves core communication challenges through three primary pillars:
-
-| Pillar | Implementation |
-|---|---|
-| **Real-Time Connectivity** | Bi-directional event streaming via Socket.IO for instant message delivery and status updates. |
-| **Intelligent Organization** | A unified "Chats" tab that uses weighted recency algorithms to surface active conversations. |
-| **Operational Transparency** | An admin dashboard providing live metrics on message throughput and group engagement. |
+ChatterBox is a modern chat application built for real-time group conversations and private messaging. The project is designed with a focus on responsiveness, secure socket connections, and accurate database tracking, making it an excellent demonstration of real-time full-stack development with MongoDB.
 
 ---
 
@@ -60,7 +52,7 @@ graph TD
 chatterbox/
 │
 ├── backend/                        # FastAPI Application (Python)
-│   ├── main.py                     # Entry point & Socket.IO initialization
+│   ├── main.py                     # Entry point, lifespan, & Socket.IO setup
 │   ├── database.py                 # Async MongoDB connection (Motor)
 │   ├── requirements.txt            # Python dependencies
 │   ├── models/
@@ -70,9 +62,9 @@ chatterbox/
 │   ├── routes/
 │   │   ├── auth.py                 # JWT Authentication & Registration
 │   │   ├── groups.py               # Group management & DM lookup logic
-│   │   └── stats.py                # High-performance aggregation queries
+│   │   └── stats.py                # Optimized statistics queries
 │   └── sockets/
-│       └── chat.py                 # Socket.IO event handlers (Join/Leave/Send)
+│       └── chat.py                 # Socket.IO connection and event handlers
 │
 ├── frontend/                       # React Application (Vite)
 │   ├── package.json                # Node dependencies
@@ -89,11 +81,11 @@ chatterbox/
 │       └── pages/
 │           ├── Auth.jsx            # Unified Login/Register view
 │           ├── ChatDashboard.jsx   # Core Chat UI (Sidebar, Messages, Input)
-│           └── Stats.jsx           # Animated Admin Dashboard
+│           └── Stats.jsx           # Animated Statistics Dashboard
 │
-├── .gitignore                      # Professional exclusion rules
+├── .gitignore                      # Git exclusion rules
 ├── LICENSE                         # MIT License
-└── README.md                       # Comprehensive Documentation
+└── README.md                       # Documentation
 ```
 
 ---
@@ -101,29 +93,36 @@ chatterbox/
 ## 🚀 Key Features
 
 ### 🔒 Security & Identity Protection
-- **JWT API Guard**: All endpoints (such as `/api/auth/users`, `/api/groups`, and `/api/stats`) are protected via FastAPI dependencies. Unauthenticated requests are automatically blocked.
-- **Handshake Authentication**: WebSockets are secured via JWT handshake validation (`socket.auth.token`). Connections with expired or missing tokens are rejected immediately.
-- **Anti-Spoofing Verification**: The backend relies solely on the verified connection state (`connected_users`) mapping sockets to database identities. Sender payloads sent by the frontend are ignored, preventing identity spoofing.
+- **JWT Route Guard**: All backend routes (like `/api/auth/users`, `/api/groups`, and `/api/stats`) are protected via FastAPI dependencies.
+- **WebSocket Handshake Validation**: Socket connections are authenticated via JWT validation during handshake (`socket.auth.token`).
+- **Anti-Spoofing Checks**: The backend maps sockets to verified user database IDs (`connected_users`). Unverified sender payloads from the client are ignored to prevent identity spoofing.
 
 ### 📡 Real-Time Interactions & Presence
-- **Instant Messaging**: High-performance delivery with real-time double-tick read receipts (`✓` sent, `✓✓` seen).
-- **Auto-Presence System**: Robust user presence tracking. If a user disconnects, closes their browser tab, or their system sleeps, the server catches the disconnect event, updates MongoDB (`isOnline: false`), and broadcasts the offline status in real-time.
-- **Typing Indicators**: Visual feedback when a participant is actively typing inside an open chat room.
+- **Instant Messaging**: Real-time message delivery with seen receipts (`✓` sent, `✓✓` seen).
+- **Multi-Tab Presence Tracking**: The system tracks active connections per user. Users are marked offline (`isOnline: false`) only when their last browser tab/window is closed, preventing offline flickering on refresh.
+- **Race-Condition-Free Group Creation**: When a group/DM is created, the backend automatically joins all active member connections to the new room instantly, guaranteeing they receive the first messages in real time.
+- **Typing Indicators**: Visual indicators showing when a user is typing inside the active chat.
 
-### 👥 Advanced Group Dynamics & UX
-- **Weighted Chats Sidebar**: Direct DMs and Group chats are shown in the "Chats" tab only if they have message history (non-empty chats).
-- **Seen Message Deletion Guard**: Message deletion is strictly restricted. Only the sender can delete a message, and only if it has **not** been read/seen by any other group member yet (i.e. before it shows double-checkmarks `✓✓`).
-- **Real-Time Deletion Syncing**: Deleting a message dynamically updates the sidebar preview to show the second-to-last message. If the deleted message was the only message in the conversation, the chat is instantly removed from the Chats tab.
-- **Alphabetical Directory**: The "People" tab functions as a clean contact list, sorted alphabetically with all notifications and unread badges disabled. All dynamic notifications and counts are handled exclusively under the "Chats" tab.
-- **Auto-Switch Sidebar Tab**: Opening a new contact from "People" lets you preview the chat screen, and the tab automatically switches to "Chats" only when you send the first text message.
+### 🔔 Context-Aware Sounds & Toast Notifications
+- **Web Audio Chimes**: Chime sounds are synthesized dynamically on the fly via the browser's Web Audio API.
+- **In-App Toast Popups**: Sliding glassmorphic toasts display message previews.
+- **Smart Notification Rules**: 
+  - Sounds and toasts are silenced if you are actively viewing the chat tab and looking at that open room.
+  - If you switch tabs, look at another chat, browse the People/Groups tab, or minimize the browser, sound and toast alerts trigger instantly.
+  - Clicking a Toast automatically switches your tab to "Chats" and opens the conversation.
+
+### 👥 Group Dynamics & Clean UI
+- **Active Chats Sidebar**: Conversations show in the "Chats" sidebar tab if they have message history or pending unread messages.
+- **Seen Deletion Restriction**: Users can delete messages only if they are the sender and the message has not been read/seen by anyone else yet (before showing the `✓✓` receipt).
 - **"You" Preview Prefix**: Displays `"You: [message]"` instead of your username for your own last sent messages in the sidebar.
-- **Self-Destructing Messages**: Per-message TTL (Time-To-Live) settings (24h, 7d, or Manual).
-- **Full-Text Search**: Native MongoDB text indexing allows users to instantly search message history within any group.
-- **Integrated Glassmorphic Modals**: Fluid, custom modal overlays for delete confirmations and notifications, designed to match the application's unified design system.
+- **Alphabetical Directory**: The "People" tab is a clean contacts list sorted alphabetically. All notifications and badges are handled exclusively under the "Chats" tab to keep the directory clean.
+- **Self-Destruct Messages**: Optional per-message TTL timers (24h, 7d, or Manual).
+- **Full-Text Search**: Search message history within any chat room using MongoDB text indexing.
+- **Custom Modals**: Elegant inline dialogs for confirms and alerts.
 
 ### 📊 Server Analytics
-- **Aggregation Pipeline**: Real-time MongoDB queries to calculate message volume.
-- **Visual Insights**: Animated bar charts showing engagement metrics across the top active groups.
+- **Optimized Statistics**: Aggregates group activity by matching only the user's active groups first, making the database query fast and ensuring correct metrics are displayed.
+- **Visual Insights**: Animated bar charts of the user's most active groups.
 
 ---
 
@@ -137,7 +136,7 @@ chatterbox/
 | **Authentication** | JWT (JSON Web Tokens) with Passlib (bcrypt) |
 | **Frontend UI** | React 19, Vite, React Router 7 |
 | **Iconography** | Lucide React |
-| **Styling** | Modern CSS (Glassmorphism, Backdrop Blurs, CSS Variables) |
+| **Styling** | Modern CSS (Glassmorphism, Backdrop Blurs) |
 
 ---
 
@@ -153,9 +152,9 @@ Base URL: `http://localhost:8000/api`
 | `GET` | `/auth/users/{id}` | Fetch a specific user's details |
 | `GET` | `/groups/user/{id}` | Fetch all conversations (Groups + DMs) for a user |
 | `POST` | `/groups/create` | Create a new Group or DM channel |
-| `GET` | `/groups/dm/{u1}/{u2}`| Retrieve private conversation channel between two users |
-| `GET` | `/groups/{id}/messages`| Fetch historical message log for a room |
-| `GET` | `/groups/{id}/search?q=...`| Perform a full-text search on messages in a group |
+| `GET` | `/groups/dm/{u1}/{u2}`| Retrieve private DM between two users |
+| `GET` | `/groups/{id}/messages`| Fetch message log for a room |
+| `GET` | `/groups/{id}/search?q=...`| Perform text search on messages in a group |
 | `GET` | `/stats/group-activity`| Aggregate system-wide messaging metrics |
 
 ---
@@ -170,16 +169,20 @@ Base URL: `http://localhost:8000/api`
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # Windows: .\venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+# On Windows:
+.\venv\Scripts\activate
+
 pip install -r requirements.txt
 ```
-Create a `.env` in `backend/`:
+Create a `.env` file in the `backend/` folder:
 ```env
 MONGO_URI=mongodb://localhost:27017
 DB_NAME=chatterbox
 JWT_SECRET=your_secret_key
 ```
-Start server: `uvicorn main:combined_app --reload`
+Start server: `uvicorn main:combined_app --reload --port 8000`
 
 ### 3. Frontend Configuration
 ```bash
