@@ -15,10 +15,14 @@ export const AuthProvider = ({ children }) => {
         if (user && token) {
             socket.auth = { token };
             socket.connect();
-            // Emit only after the connection is established (connect() is async)
-            socket.once('connect', () => {
+            // Re-emit set_online on every connect AND reconnect
+            const handleConnect = () => {
                 socket.emit('set_online', { userId: user.id });
-            });
+            };
+            socket.on('connect', handleConnect);
+            return () => {
+                socket.off('connect', handleConnect);
+            };
         } else {
             socket.disconnect();
         }

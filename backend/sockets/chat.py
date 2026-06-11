@@ -44,15 +44,19 @@ def register_socket_events(sio):
     async def disconnect(sid):
         user_id = connected_users.get(sid)
         if user_id:
-            try:
-                await users_col.update_one(
-                    {"_id": ObjectId(user_id)},
-                    {"$set": {"isOnline": False, "lastSeen": datetime.now(timezone.utc)}}
-                )
-                await sio.emit("user_status", {"userId": user_id, "isOnline": False})
-            except (InvalidId, TypeError):
-                pass
-            del connected_users[sid]
+            # Check if there are other active sessions for this user (multi-tab/refresh support)
+            other_sessions = [s for s, uid in connected_users.items() if uid == user_id and s != sid]
+            if not other_sessions:
+                try:
+                    await users_col.update_one(
+                        {"_id": ObjectId(user_id)},
+                        {"$set": {"isOnline": False, "lastSeen": datetime.now(timezone.utc)}}
+                    )
+                    await sio.emit("user_status", {"userId": user_id, "isOnline": False})
+                except (InvalidId, TypeError):
+                    pass
+            # Always remove the disconnected session
+            connected_users.pop(sid, None)
         print(f"Client disconnected: {sid}")
 
     @sio.event
@@ -229,4 +233,10 @@ def register_socket_events(sio):
         members = data.get("members", [])
         if group_id:
             for m_id in members:
-                await sio.emit("group_added", {"groupId": group_id}, room=str(m_id))
+                m_str = str(m_id)
+                # Instantly join all active socket connections (sids) of this user to the group room on backend
+                member_sids = [s for s, uid in connected_users.items() if uid == m_str]
+                for m_sid in member_sids:
+                    await sio.enter_room(m_sid, group_id)
+                # Emit group_added to their personal room so their UI loads the group
+                await sio.emit("group_added", {"groupId": group_id}, room=m_str)

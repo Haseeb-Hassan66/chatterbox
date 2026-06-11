@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -18,6 +18,25 @@ function fmtTime(ts) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+const playNotificationSound = () => {
+    try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.3);
+    } catch (e) {
+        console.warn('Audio context error:', e);
+    }
+};
+
 export default function ChatDashboard() {
     const navigate = useNavigate();
     const { user, token, logout } = useAuth();
@@ -28,12 +47,16 @@ export default function ChatDashboard() {
     const [sideSearch, setSideSearch] = useState('');
     
     const [currentChat, setCurrentChat] = useState(null);
+    const currentChatRef = useRef(null);
     const [messages, setMessages] = useState([]);
     const [unreadCounts, setUnreadCounts] = useState({});
     
     const [typingStatus, setTypingStatus] = useState('');
     const typingTimeoutRef = useRef(null);
     const messagesEndRef = useRef(null);
+    const userRef = useRef(user);
+    // Tracks whether the browser tab/window is currently visible and focused
+    const windowFocusedRef = useRef(!document.hidden);
     
     const [msgInput, setMsgInput] = useState('');
     const [deleteMode, setDeleteMode] = useState('manual');
@@ -47,116 +70,261 @@ export default function ChatDashboard() {
     const [searchResults, setSearchResults] = useState([]);
     const [messageToDelete, setMessageToDelete] = useState(null);
     const [alertMsg, setAlertMsg] = useState(null);
+    const [toasts, setToasts] = useState([]);
+
+    // Keep refs in sync with latest state so socket handlers never use stale closures
+    useEffect(() => { currentChatRef.current = currentChat; }, [currentChat]);
+    useEffect(() => { userRef.current = user; }, [user]);
+
+    // Track browser tab visibility so we know if the user can actually see the chat
+    useEffect(() => {
+        const onVisible = () => { windowFocusedRef.current = true; };
+        const onHidden  = () => { windowFocusedRef.current = false; };
+        const handleVisibility = () => { if (document.hidden) onHidden(); else onVisible(); };
+        document.addEventListener('visibilitychange', handleVisibility);
+        window.addEventListener('focus', onVisible);
+        window.addEventListener('blur',  onHidden);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibility);
+            window.removeEventListener('focus', onVisible);
+            window.removeEventListener('blur',  onHidden);
+        };
+    }, []);
+
+
+    const loadInitialData = useCallback(async () => {
+        try {
+            const [gRes, uRes] = await Promise.all([
+                api.get(`/groups/user/${userRef.current.id}`),
+                api.get('/auth/users')
+            ]);
+            setGroups(gRes.data);
+            const initialUnreads = {};
+            gRes.data.forEach(g => {
+                if (g.unreadCount > 0) initialUnreads[g.id] = g.unreadCount;
+            });
+            setUnreadCounts(initialUnreads);
+            setAllUsers(uRes.data);
+        } catch (err) {
+            console.error('Failed to load initial data');
+        }
+    // userRef is a ref — stable by definition, no need in deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         if (!token) return;
-        const loadInitialData = async () => {
-            try {
-                const [gRes, uRes] = await Promise.all([
-                    api.get(`/groups/user/${user.id}`),
-                    api.get('/auth/users')
-                ]);
-                setGroups(gRes.data);
-                
-                const initialUnreads = {};
-                gRes.data.forEach(g => {
-                    if (g.unreadCount > 0) {
-                        initialUnreads[g.id] = g.unreadCount;
-                    }
-                });
-                setUnreadCounts(initialUnreads);
-
-                setAllUsers(uRes.data);
-            } catch (err) {
-                console.error('Failed to load initial data');
-            }
-        };
         loadInitialData();
-    }, [token, user.id]);
+    }, [token, user.id, loadInitialData]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
     useEffect(() => {
-        socket.on('new_message', (msg) => {
+        // ─── new_message ─────────────────────────────────────────────────
+        const handleNewMessage = (msg) => {
+            const me = userRef.current;
+            if (!me) return; // Guard: user logged out or component unmounting
+
+            const activeChatId = currentChatRef.current?.id;
+            // "foreground" = this exact conversation's panel is open right now.
+            // We never need sound/toast for the chat the user is actively reading.
+            // For OTHER chats: only notify if the window is actually visible so we
+            // don't spam sounds when the user has the page open in a background tab.
+            const isThisChat = activeChatId === msg.groupId;
+            const isActiveChatFocused = isThisChat;  // open chat → always silent
+
+            // ── 1. Always update the sidebar preview ──────────────────────
             setGroups(prevGroups => {
-                const newGroups = [...prevGroups];
-                const gIndex = newGroups.findIndex(x => x.id === msg.groupId);
-                if (gIndex > -1) {
-                    newGroups[gIndex] = {
-                        ...newGroups[gIndex],
-                        lastMessage: { content: msg.content, senderName: msg.senderName, senderId: msg.senderId, createdAt: msg.createdAt }
-                    };
+                const idx = prevGroups.findIndex(x => x.id === msg.groupId);
+                if (idx === -1) {
+                    // Group not in local state yet (first DM ever received).
+                    // Background refresh; return unchanged synchronously.
+                    api.get(`/groups/user/${me.id}`).then(res => {
+                        setGroups(res.data);
+                        const initialUnreads = {};
+                        res.data.forEach(g => {
+                            if (g.unreadCount > 0) initialUnreads[g.id] = g.unreadCount;
+                        });
+                        setUnreadCounts(initialUnreads);
+                    });
+                    return prevGroups;
                 }
-                return newGroups;
+                const updated = [...prevGroups];
+                updated[idx] = {
+                    ...updated[idx],
+                    lastMessage: {
+                        content: msg.content,
+                        senderName: msg.senderName,
+                        senderId: msg.senderId,
+                        createdAt: msg.createdAt
+                    }
+                };
+                return updated;
             });
 
-            if (currentChat && msg.groupId === currentChat.id) {
+            // ── 2. If the chat is open on the right panel, render the msg ─
+            if (activeChatId === msg.groupId) {
                 setMessages(prev => [...prev, msg]);
-                if (msg.senderId !== user.id) {
-                    socket.emit('mark_read', { messageId: msg._id, userId: user.id, groupId: msg.groupId });
+            }
+
+            // ── 3. Route notification vs. silent-read ─────────────────────
+            if (isActiveChatFocused) {
+                // User is on Chats tab with this chat open — mark as read now
+                if (msg.senderId !== me.id) {
+                    socket.emit('mark_read', {
+                        messageId: msg._id,
+                        userId: me.id,
+                        groupId: msg.groupId
+                    });
                 }
             } else {
-                if (msg.senderId !== user.id) {
-                    setUnreadCounts(prev => ({ ...prev, [msg.groupId]: (prev[msg.groupId] || 0) + 1 }));
+                // Background or wrong-tab — always show an unread badge so the
+                // user is notified even when on People / Groups tab
+                if (msg.senderId !== me.id) {
+                    setUnreadCounts(prev => ({
+                        ...prev,
+                        [msg.groupId]: (prev[msg.groupId] || 0) + 1
+                    }));
                 }
             }
-        });
 
-        socket.on('message_deleted', ({ messageId, groupId, newLastMessage }) => {
+            if (msg.senderId !== me.id) {
+                // Only silence notifications if the user is actively viewing this specific chat room (tab is visible AND chat is active).
+                // In all other cases (e.g. they are in another chat, on Groups/People tab, or the tab is hidden), they get sound/toast.
+                const isViewingThisChat = (activeChatId === msg.groupId) && !document.hidden;
+
+                if (!isViewingThisChat) {
+                    playNotificationSound();
+                    const id = Date.now() + Math.random();
+                    setToasts(prev => [...prev, {
+                        id,
+                        title: msg.senderName || 'New Message',
+                        content: msg.content,
+                        groupId: msg.groupId
+                    }]);
+                    setTimeout(() => {
+                        setToasts(curr => curr.filter(t => t.id !== id));
+                    }, 4000);
+                }
+            }
+        };
+
+        // ─── message_deleted ─────────────────────────────────────────────
+        const handleMessageDeleted = ({ messageId, groupId, newLastMessage }) => {
             setMessages(prev => prev.filter(m => m._id !== messageId));
             setGroups(prevGroups => {
-                const newGroups = [...prevGroups];
-                const gIndex = newGroups.findIndex(x => x.id === groupId);
-                if (gIndex > -1) {
-                    newGroups[gIndex] = {
-                        ...newGroups[gIndex],
-                        lastMessage: newLastMessage
-                    };
-                }
-                return newGroups;
+                const idx = prevGroups.findIndex(x => x.id === groupId);
+                if (idx === -1) return prevGroups;
+                const updated = [...prevGroups];
+                updated[idx] = { ...updated[idx], lastMessage: newLastMessage };
+                return updated;
             });
-        });
+        };
 
-        socket.on('message_read', ({ messageId, userId }) => {
+        // ─── message_read ────────────────────────────────────────────────
+        const handleMessageRead = ({ messageId, userId }) => {
             setMessages(prev => prev.map(m => {
-                if (m._id === messageId) {
-                    const reads = m.readBy || [];
-                    if (!reads.includes(userId)) return { ...m, readBy: [...reads, userId] };
-                }
-                return m;
+                if (m._id !== messageId) return m;
+                const reads = m.readBy || [];
+                if (reads.includes(userId)) return m;
+                return { ...m, readBy: [...reads, userId] };
             }));
-        });
+        };
 
-        socket.on('user_typing', ({ username, groupId }) => {
-            if (currentChat && groupId === currentChat.id && username !== user.username) {
+        // ─── user_typing ─────────────────────────────────────────────────
+        const handleUserTyping = ({ username, groupId }) => {
+            const me = userRef.current;
+            if (!me) return; // Guard: user logged out
+            const activeChatId = currentChatRef.current?.id;
+            if (activeChatId && groupId === activeChatId && username !== me.username) {
                 setTypingStatus(`${username} is typing...`);
                 if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
                 typingTimeoutRef.current = setTimeout(() => setTypingStatus(''), 2500);
             }
-        });
+        };
 
-        socket.on('user_status', ({ userId, isOnline }) => {
+        // ─── user_status ─────────────────────────────────────────────────
+        const handleUserStatus = ({ userId, isOnline }) => {
             setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, isOnline } : u));
-        });
+        };
 
-        socket.on('group_added', ({ groupId }) => {
+        // ─── group_added ─────────────────────────────────────────────────
+        const handleGroupAdded = ({ groupId }) => {
+            const me = userRef.current;
+            if (!me) return; // Guard: user logged out
             socket.emit('join_group', { groupId });
-            api.get(`/groups/user/${user.id}`).then(res => {
+            // Full refresh so unread counts + users are also updated
+            loadInitialData();
+        };
+
+        // ─── reconnect: reload fresh data AND re-join all rooms ────────
+        const handleReconnect = () => {
+            const me = userRef.current;
+            if (!me) return;
+            // Re-join every group room so incoming messages are received again.
+            // We read groupsRef lazily via the API to avoid a stale closure.
+            api.get(`/groups/user/${me.id}`).then(res => {
                 setGroups(res.data);
-            });
-        });
+                const unreads = {};
+                res.data.forEach(g => {
+                    if (g.unreadCount > 0) unreads[g.id] = g.unreadCount;
+                    socket.emit('join_group', { groupId: g.id });
+                });
+                setUnreadCounts(unreads);
+            }).catch(() => {});
+            // Also refresh the user list
+            api.get('/auth/users').then(res => setAllUsers(res.data)).catch(() => {});
+        };
+
+        socket.on('new_message',    handleNewMessage);
+        socket.on('message_deleted', handleMessageDeleted);
+        socket.on('message_read',   handleMessageRead);
+        socket.on('user_typing',    handleUserTyping);
+        socket.on('user_status',    handleUserStatus);
+        socket.on('group_added',    handleGroupAdded);
+        socket.on('connect',        handleReconnect);
 
         return () => {
-            socket.off('new_message');
-            socket.off('message_deleted');
-            socket.off('message_read');
-            socket.off('user_typing');
-            socket.off('user_status');
-            socket.off('group_added');
+            socket.off('new_message',    handleNewMessage);
+            socket.off('message_deleted', handleMessageDeleted);
+            socket.off('message_read',   handleMessageRead);
+            socket.off('user_typing',    handleUserTyping);
+            socket.off('user_status',    handleUserStatus);
+            socket.off('group_added',    handleGroupAdded);
+            socket.off('connect',        handleReconnect);
         };
-    }, [currentChat, user.id, user.username]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Intentionally empty — refs keep values fresh without re-registering
+
+    // When the user returns to the Chats tab with the current chat open,
+    // mark any messages that accumulated while they were on People/Groups tab
+    // as read so the sender gets the double-tick and the badge clears.
+    useEffect(() => {
+        if (currentSideTab === 'chats' && currentChat) {
+            const hasUnread = (unreadCounts[currentChat.id] || 0) > 0;
+            if (hasUnread) {
+                setUnreadCounts(prev => ({ ...prev, [currentChat.id]: 0 }));
+                // Re-emit mark_read for every unread message currently loaded
+                messages.forEach(m => {
+                    if (
+                        m.senderId !== user.id &&
+                        (!m.readBy || !m.readBy.includes(user.id))
+                    ) {
+                        socket.emit('mark_read', {
+                            messageId: m._id,
+                            userId: user.id,
+                            groupId: currentChat.id
+                        });
+                    }
+                });
+            }
+        }
+    // We intentionally omit messages/unreadCounts/user from deps — we only
+    // want this to fire when the tab or active chat changes, not on every msg.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentSideTab, currentChat?.id]);
 
     const handleLogout = () => {
         logout();
@@ -170,7 +338,9 @@ export default function ChatDashboard() {
     };
 
     const openGroupChat = async (g) => {
-        if (currentChat) socket.emit('leave_group', { groupId: currentChat.id });
+        // Clear any typing indicator that was showing for the previous chat
+        setTypingStatus('');
+        if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
         setCurrentChat({ id: g.id, type: 'group', name: g.name, membersCount: g.members.length });
         setUnreadCounts(prev => ({ ...prev, [g.id]: 0 }));
         socket.emit('join_group', { groupId: g.id });
@@ -203,7 +373,9 @@ export default function ChatDashboard() {
             }
             if (!dmGroup) throw new Error('Could not open conversation');
 
-            if (currentChat) socket.emit('leave_group', { groupId: currentChat.id });
+            // Clear any typing indicator that was showing for the previous chat
+            setTypingStatus('');
+            if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
             setCurrentChat({ id: dmGroup.id, type: 'dm', name: otherUser.username, otherId: otherUser.id });
             setUnreadCounts(prev => ({ ...prev, [dmGroup.id]: 0 }));
             socket.emit('join_group', { groupId: dmGroup.id });
@@ -226,6 +398,33 @@ export default function ChatDashboard() {
         } catch (err) {
             console.error('Failed to load messages');
         }
+    };
+
+    const handleToastClick = async (t) => {
+        setToasts(prev => prev.filter(x => x.id !== t.id));
+        let targetGroup = groups.find(g => g.id === t.groupId);
+        if (!targetGroup) {
+            try {
+                const res = await api.get(`/groups/user/${user.id}`);
+                setGroups(res.data);
+                targetGroup = res.data.find(g => g.id === t.groupId);
+            } catch (err) {
+                console.error('Failed to load group on toast click', err);
+            }
+        }
+        if (targetGroup) {
+            if (targetGroup.isDM) {
+                const partner = getDMPartner(targetGroup);
+                if (partner) {
+                    openDMChat(partner);
+                } else {
+                    openGroupChat(targetGroup);
+                }
+            } else {
+                openGroupChat(targetGroup);
+            }
+        }
+        setCurrentSideTab('chats');
     };
 
     const sendMessage = () => {
@@ -283,8 +482,10 @@ export default function ChatDashboard() {
     };
 
     const filteredChats = groups.filter(g => {
-        if (!g.lastMessage) return false;
-        
+        // Show if it has messages OR has unread count (newly added group with pending msgs)
+        const hasActivity = !!g.lastMessage || (unreadCounts[g.id] || 0) > 0;
+        if (!hasActivity) return false;
+
         if (g.isDM) {
             const p = getDMPartner(g);
             return p && p.username.toLowerCase().includes(sideSearch.toLowerCase());
@@ -304,12 +505,25 @@ export default function ChatDashboard() {
 
     const chatsUnread = groups.some(g => (unreadCounts[g.id] || 0) > 0);
     const groupsUnread = groups.some(g => !g.isDM && (unreadCounts[g.id] || 0) > 0);
-    const peopleUnread = false;
+    // People tab intentionally has NO dot — DM unreads are already visible in the Chats tab.
 
     let lastDate = '';
 
     return (
         <div className="app-container">
+            {/* Toast Notifications */}
+            <div className="toasts-container">
+                {toasts.map(t => (
+                    <div key={t.id} className="toast" onClick={() => handleToastClick(t)}>
+                        <div className="toast-header">
+                            <span className="toast-title">💬 {t.title}</span>
+                            <button className="toast-close" onClick={(e) => { e.stopPropagation(); setToasts(prev => prev.filter(x => x.id !== t.id)); }}>✕</button>
+                        </div>
+                        <div className="toast-body">{t.content}</div>
+                    </div>
+                ))}
+            </div>
+
             {/* Sidebar */}
             <div className="sidebar">
                 <div className="sidebar-header">
@@ -327,7 +541,7 @@ export default function ChatDashboard() {
                         Groups {groupsUnread && <span className="tab-dot"></span>}
                     </div>
                     <div className={`stab ${currentSideTab === 'people' ? 'active' : ''}`} onClick={() => setCurrentSideTab('people')}>
-                        People {peopleUnread && <span className="tab-dot"></span>}
+                        People
                     </div>
                 </div>
                 <div className="search-wrap">
