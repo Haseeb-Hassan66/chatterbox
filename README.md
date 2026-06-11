@@ -194,6 +194,15 @@ Navigate to `http://localhost:5173`.
 
 ---
 
+## 👥 Development Team
+
+| Name | GitHub |
+|---|---|
+| **Haseeb Hassan** | [@Haseeb-Hassan66](https://github.com/Haseeb-Hassan66) |
+| **Anees Memon** | [@Anees-Memon-Hub](https://github.com/Anees-Memon-Hub) |
+
+---
+
 ## 📄 License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
